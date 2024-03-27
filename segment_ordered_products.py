@@ -29,3 +29,23 @@ def get_profile_events(profile_id):
 	"""
 	return klaviyo.Events.get_events(fields_event=['event_properties'],filter=f"equals(metric_id,\"{PLACED_ORDER_METRIC}\"),equals(profile_id,\"{profile_id}\")")["data"]
 	
+profiles = get_segment_profiles(SEGMENT_ID)
+
+for profile in profiles:
+	profile_id = profile["id"]
+
+	# Chceck if "ordered_product" is set for a profile
+	if "ordered_products" in profile["attributes"]["properties"]:
+		ordered_products = profile["attributes"]["properties"]["ordered_products"]
+	else:
+		ordered_products = []
+	print(f'Profile id: {profile_id}')
+	print(f'Email: {profile["attributes"]["email"]}')
+	
+	events = get_profile_events(profile_id)
+
+	for event in events:
+		item_list = event["attributes"]["event_properties"]["Items"]
+		ordered_products = list(set(ordered_products + item_list))
+
+	print(f'Ordered products: {ordered_products}')

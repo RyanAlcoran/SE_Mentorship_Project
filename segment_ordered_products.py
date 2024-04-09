@@ -1,4 +1,6 @@
 from klaviyo_api import KlaviyoAPI
+import csv
+from datetime import datetime
 
 SEGMENT_ID = "XvXWFN"
 # Placed Order metric
@@ -19,18 +21,25 @@ def get_segment_profiles(segment_id):
     return klaviyo.Segments.get_segment_profiles(segment_id)["data"]
 
 
-def get_profile_events(profile_id):
+def get_profile_events(profile_id, last_update=None):
     """ Get a dictionary of Placed Order events by profile id
 
     Args:
         profile_id (string): Unique identifier for profile
+        last_update (datetime): Optional argument to include last update date
     Returns:
         profile_events (dict): All placed order events for a profile
     """
-    return klaviyo.Events.get_events(fields_event=['event_properties'],filter=f"equals(metric_id,\"{PLACED_ORDER_METRIC}\"),equals(profile_id,\"{profile_id}\")")["data"]
+    if last_update is None:
+        return klaviyo.Events.get_events(fields_event=['event_properties'],filter=f"equals(metric_id,\"{PLACED_ORDER_METRIC}\"),equals(profile_id,\"{profile_id}\")")["data"]
+    else:
+        return klaviyo.Events.get_events(fields_event=['event_properties'],filter=f"equals(metric_id,\"{PLACED_ORDER_METRIC}\"),equals(profile_id,\"{profile_id}\"),greater-or-equal(datetime,{last_update})")["data"]
+
 
 def main():
     profiles = get_segment_profiles(SEGMENT_ID)
+
+    #csv_header = ["Email", "Order Number", "Product ID", "Product Name" ]
 
     for profile in profiles:
         # Get profile information
@@ -43,24 +52,36 @@ def main():
             ordered_products = []
         print(f'Profile id: {profile_id}')
         print(f'Email: {profile["attributes"]["email"]}')
-        
-        # Get events for profile
-        events = get_profile_events(profile_id)
 
+        # Check if "ordered_products_list_last_update" is set for a profile then get events
+        if "ordered_products_list_last_update" in profile["attributes"]["properties"]:
+            last_update = profile["attributes"]["properties"]["ordered_products_list_last_update"]
+            events = get_profile_events(profile_id, last_update)
+        else:
+            events = get_profile_events(profile_id)
+
+        # Set last_udpate to now
+        last_update = datetime.now().isoformat()
+
+        # Get all events and items to the ordered_products list
         for event in events:
             item_list = event["attributes"]["event_properties"]["Items"]
             ordered_products = list(set(ordered_products + item_list))
 
-        # Create payload to update custom_property
+        # Create payload to update custom properties
         payload = { "data": {
             "type": "profile",
             "id": profile_id,
-            "attributes": { "properties": { "ordered_products": ordered_products } }
+            "attributes": { "properties": { "ordered_products": ordered_products, 
+            "ordered_products_list_last_update": last_update} }
             } }
 
-        # Write to profile
+        # Write custom properties to profile
         klaviyo.Profiles.update_profile(profile_id, payload)
-        print(f'Ordered products: {ordered_products}')
+        print(f'Ordered products: {ordered_products}\n')
+
+
+
 
 if __name__ == '__main__':
     main()

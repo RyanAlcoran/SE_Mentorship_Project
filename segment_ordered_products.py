@@ -39,47 +39,59 @@ def get_profile_events(profile_id, last_update=None):
 def main():
     profiles = get_segment_profiles(SEGMENT_ID)
 
-    #csv_header = ["Email", "Order Number", "Product ID", "Product Name" ]
+    # Create CSV writer
+    csv_header = ["Email", "First Name", "Last Name", "Ordered Products" ]
+    filename =  f"{SEGMENT_ID}-{datetime.now().isoformat()}.csv"
 
-    for profile in profiles:
-        # Get profile information
-        profile_id = profile["id"]
+    with open(f"exports/{filename}", "w", newline="") as segment_file:
+        segment_writer = csv.writer(segment_file)
+        segment_writer.writerow(csv_header)
 
-        # Check if "ordered_product" is set for a profile
-        if "ordered_products" in profile["attributes"]["properties"]:
-            ordered_products = profile["attributes"]["properties"]["ordered_products"]
-        else:
-            ordered_products = []
-        print(f'Profile id: {profile_id}')
-        print(f'Email: {profile["attributes"]["email"]}')
 
-        # Check if "ordered_products_list_last_update" is set for a profile then get events
-        if "ordered_products_list_last_update" in profile["attributes"]["properties"]:
-            last_update = profile["attributes"]["properties"]["ordered_products_list_last_update"]
-            events = get_profile_events(profile_id, last_update)
-        else:
-            events = get_profile_events(profile_id)
+        for profile in profiles:
+            # Get profile information
+            profile_id = profile["id"]
+            profile_email = profile["attributes"]["email"]
+            profile_first_name = profile["attributes"]["first_name"]
+            profile_last_name = profile["attributes"]["last_name"]
 
-        # Set last_udpate to now
-        last_update = datetime.now().isoformat()
+            # Check if "ordered_product" is set for a profile
+            if "ordered_products" in profile["attributes"]["properties"]:
+                ordered_products = profile["attributes"]["properties"]["ordered_products"]
+            else:
+                ordered_products = []
+            print(f'Profile id: {profile_id}')
+            print(f'Email: {profile["attributes"]["email"]}')
 
-        # Get all events and items to the ordered_products list
-        for event in events:
-            item_list = event["attributes"]["event_properties"]["Items"]
-            ordered_products = list(set(ordered_products + item_list))
+            # Check if "ordered_products_list_last_update" is set for a profile then get events
+            if "ordered_products_list_last_update" in profile["attributes"]["properties"]:
+                last_update = profile["attributes"]["properties"]["ordered_products_list_last_update"]
+                events = get_profile_events(profile_id, last_update)
+            else:
+                events = get_profile_events(profile_id)
 
-        # Create payload to update custom properties
-        payload = { "data": {
-            "type": "profile",
-            "id": profile_id,
-            "attributes": { "properties": { "ordered_products": ordered_products, 
-            "ordered_products_list_last_update": last_update} }
-            } }
+            # Set last_udpate to now
+            last_update = datetime.now().isoformat()
 
-        # Write custom properties to profile
-        klaviyo.Profiles.update_profile(profile_id, payload)
-        print(f'Ordered products: {ordered_products}\n')
+            # Get all events and items to the ordered_products list
+            for event in events:
+                item_list = event["attributes"]["event_properties"]["Items"]
+                ordered_products = list(set(ordered_products + item_list))
 
+            # Create payload to update custom properties
+            payload = { "data": {
+                "type": "profile",
+                "id": profile_id,
+                "attributes": { "properties": { "ordered_products": ordered_products, 
+                "ordered_products_list_last_update": last_update} }
+                } }
+
+            # Write custom properties to profile
+            klaviyo.Profiles.update_profile(profile_id, payload)
+            print(f'Ordered products: {ordered_products}\n')
+
+            # Write ordeded products to CSV
+            segment_writer.writerow([profile_email, profile_first_name, profile_last_name, ', '.join(ordered_products)])
 
 
 

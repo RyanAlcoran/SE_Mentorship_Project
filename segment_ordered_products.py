@@ -10,17 +10,7 @@ PRIVATE_API_KEY = ""
 klaviyo = KlaviyoAPI(PRIVATE_API_KEY, max_delay=60, max_retries=3, test_host=None)
 
 
-def get_segment_profiles(segment_id):
-    """ Get a dictionary of profiles by segment id
-
-    Args:
-        segment_id (string): Segment ID
-    Returns:
-        segment_profiles (dict): Dictionary of profiles
-    """
-    return 
-
-def get_profile_events(profile_id, last_update=None):
+def get_profile_events(profile_id, last_update=None, next_url=None):
     """ Get a dictionary of Placed Order events by profile id
 
     Args:
@@ -30,9 +20,9 @@ def get_profile_events(profile_id, last_update=None):
         profile_events (dict): All placed order events for a profile
     """
     if last_update is None:
-        return klaviyo.Events.get_events(fields_event=['event_properties'],filter=f"equals(metric_id,\"{PLACED_ORDER_METRIC}\"),equals(profile_id,\"{profile_id}\")")["data"]
+        return klaviyo.Events.get_events(fields_event=['event_properties'],filter=f"equals(metric_id,\"{PLACED_ORDER_METRIC}\"),equals(profile_id,\"{profile_id}\")",page_cursor=next_url)
     else:
-        return klaviyo.Events.get_events(fields_event=['event_properties'],filter=f"equals(metric_id,\"{PLACED_ORDER_METRIC}\"),equals(profile_id,\"{profile_id}\"),greater-or-equal(datetime,{last_update})")["data"]
+        return klaviyo.Events.get_events(fields_event=['event_properties'],filter=f"equals(metric_id,\"{PLACED_ORDER_METRIC}\"),equals(profile_id,\"{profile_id}\"),greater-or-equal(datetime,{last_update})",page_cursor=next_url)
 
 def process_profile(profile):
     """ Get all ordered products for a profile
@@ -42,59 +32,71 @@ def process_profile(profile):
     Returns:
         profile_dict (dict): Profile information with all ordered products
     """
-        # Get profile information
-        profile_id = profile["id"]
-        profile_email = profile["attributes"]["email"]
-        profile_first_name = profile["attributes"]["first_name"]
-        profile_last_name = profile["attributes"]["last_name"]
+    # Get profile information
+    profile_id = profile["id"]
+    profile_email = profile["attributes"]["email"]
+    profile_first_name = profile["attributes"]["first_name"]
+    profile_last_name = profile["attributes"]["last_name"]
 
-        # Check if "ordered_product" is set for a profile
-        if "ordered_products" in profile["attributes"]["properties"]:
-            ordered_products = profile["attributes"]["properties"]["ordered_products"]
-        else:
-            ordered_products = []
-        print(f'Profile id: {profile_id}')
-        print(f'Email: {profile["attributes"]["email"]}')
+    # Check if "ordered_product" is set for a profile
+    if "ordered_products" in profile["attributes"]["properties"]:
+        ordered_products = profile["attributes"]["properties"]["ordered_products"]
+    else:
+        ordered_products = []
+    print(f'Profile id: {profile_id}')
+    print(f'Email: {profile["attributes"]["email"]}')
 
-        # Check if "ordered_products_list_last_update" is set for a profile then get events
-        if "ordered_products_list_last_update" in profile["attributes"]["properties"]:
-            last_update = profile["attributes"]["properties"]["ordered_products_list_last_update"]
-            events = get_profile_events(profile_id, last_update)
-        else:
-            events = get_profile_events(profile_id)
+    # Check if "ordered_products_list_last_update" is set for a profile then get events
+    if "ordered_products_list_last_update" in profile["attributes"]["properties"]:
+        last_update = profile["attributes"]["properties"]["ordered_products_list_last_update"]
+        response = get_profile_events(profile_id, last_update=last_update)
+    else:
+        response = get_profile_events(profile_id)
 
-        # Set last_udpate to now
-        last_update = datetime.now().isoformat()
+    # Set last_udpate to now
+    last_update = datetime.now().isoformat()
 
-        # Get all events and items to the ordered_products list
+    # Get get first page of events and add items to the ordered_products list
+    events = response["data"]
+    next_url = response["links"]["next"]
+    for event in events:
+        item_list = event["attributes"]["event_properties"]["Items"]
+        ordered_products = list(set(ordered_products + item_list))
+
+    # Paginate through remaining events
+    while next_url is not None:
+        response = get_profile_events(profile_id, next_url=next_url)
+        events = response["data"]
         for event in events:
             item_list = event["attributes"]["event_properties"]["Items"]
             ordered_products = list(set(ordered_products + item_list))
+        next_url = response["links"]["next"]
 
-        # Create payload to update custom properties
-        payload = { "data": {
-            "type": "profile",
-            "id": profile_id,
-            "attributes": { "properties": { "ordered_products": ordered_products, 
-            "ordered_products_list_last_update": last_update} }
-            } }
 
-        # Write custom properties to profile
-        klaviyo.Profiles.update_profile(profile_id, payload)
-        print(f'Ordered products: {ordered_products}\n')
+    # Create payload to update custom properties
+    payload = { "data": {
+        "type": "profile",
+        "id": profile_id,
+        "attributes": { "properties": { "ordered_products": ordered_products, 
+        "ordered_products_list_last_update": last_update} }
+        } }
 
-        # Create dictionary of profile information
-        profile_dict = dict()
-        profile_dict["profile_email"] = profile_email
-        profile_dict["profile_first_name"] = profile_first_name
-        profile_dict["profile_last_name"] = profile_last_name
-        profile_dict["ordered_products"] = ordered_products
+    # Write custom properties to profile
+    klaviyo.Profiles.update_profile(profile_id, payload)
+    print(f'Ordered products: {ordered_products}\n')
 
-        return profile_dict
+    # Create dictionary of profile information
+    profile_dict = dict()
+    profile_dict["profile_email"] = profile_email
+    profile_dict["profile_first_name"] = profile_first_name
+    profile_dict["profile_last_name"] = profile_last_name
+    profile_dict["ordered_products"] = ordered_products
+
+    return profile_dict
 
 
 def main():
-    response = get_segment_profiles(SEGMENT_ID)
+    response = klaviyo.Segments.get_segment_profiles(SEGMENT_ID)
     profiles = response["data"]
     next_url = response["links"]["next"]
 
@@ -106,13 +108,14 @@ def main():
         segment_writer = csv.writer(segment_file)
         segment_writer.writerow(csv_header)
 
+        # Get the first page of profiles
         for profile in profiles:
             output = process_profile(profile)
             segment_writer.writerow([output["profile_email"], output["profile_first_name"], output["profile_last_name"], ', '.join(output["ordered_products"])])
 
         # Paginate through remaining profiles
         while next_url is not None:
-            response = get_segment_profiles(SEGMENT_ID)
+            response = klaviyo.Segments.get_segment_profiles(SEGMENT_ID, page_cursor=next_url)
             profiles = response["data"]
             for profile in profiles:
                 output = process_profile(profile)
